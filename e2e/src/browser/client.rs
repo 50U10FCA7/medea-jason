@@ -96,6 +96,10 @@ impl WebDriverClient {
             .await
     }
 
+    pub async fn switch_to_window(&self, window: WindowHandle) -> Result<()> {
+        self.inner.lock().await.switch_to_window(window).await
+    }
+
     /// Synchronously closes a [WebDriver] session.
     ///
     /// [WebDriver]: https://w3.org/TR/webdriver
@@ -103,7 +107,7 @@ impl WebDriverClient {
     /// # Panics
     ///
     /// If [`tokio::spawn()`] panics.
-    pub fn blocking_close(&self) {
+    pub fn close(&self) {
         let (tx, rx) = mpsc::channel();
         let client = Arc::clone(&self.inner);
         drop(tokio::spawn(async move {
@@ -114,6 +118,11 @@ impl WebDriverClient {
         task::block_in_place(move || {
             rx.recv().unwrap();
         });
+        // task::block_in_place(move || {
+        //     drop(futures::executor::block_on(async {
+        //         self.inner.lock().await.0.clone().close().await
+        //     }));
+        // });
     }
 
     /// Synchronously closes the provided browser window.
@@ -121,7 +130,7 @@ impl WebDriverClient {
     /// # Panics
     ///
     /// If [`tokio::spawn()`] panics.
-    pub fn blocking_window_close(&self, window: WindowHandle) {
+    pub fn close_window(&self, window: WindowHandle) {
         let (tx, rx) = mpsc::channel();
         let client = Arc::clone(&self.inner);
         drop(tokio::spawn(async move {
@@ -132,6 +141,11 @@ impl WebDriverClient {
         task::block_in_place(move || {
             rx.recv().unwrap();
         });
+        // task::block_in_place(move || {
+        //     futures::executor::block_on(async {
+        //         self.inner.lock().await.close_window(window).await
+        //     });
+        // });
     }
 }
 
@@ -307,6 +321,12 @@ impl Inner {
         Ok(window)
     }
 
+    /// Switches to the provided browser window.
+    async fn switch_to_window(&mut self, window: WindowHandle) -> Result<()> {
+        self.0.switch_to_window(window).await?;
+        Ok(())
+    }
+
     /// Switches to the provided browser window and executes the provided
     /// [`Statement`].
     async fn switch_to_window_and_execute(
@@ -314,14 +334,23 @@ impl Inner {
         window: WindowHandle,
         exec: Statement,
     ) -> Result<Json> {
-        self.0.switch_to_window(window).await?;
+        self.switch_to_window(window).await?;
         self.execute(exec).await
     }
 
     /// Closes the provided browser window.
+    ///
+    /// __Warning__: Caller must ensure that no other browser window can be
+    ///              switched while this method is running.
     async fn close_window(&mut self, window: WindowHandle) {
-        if self.0.switch_to_window(window).await.is_ok() {
+        let previous = self.0.window().await.ok();
+
+        if self.switch_to_window(window).await.is_ok() {
             drop(self.0.close_window().await);
+        }
+
+        if let Some(prev) = previous {
+            drop(self.switch_to_window(prev).await)
         }
     }
 }

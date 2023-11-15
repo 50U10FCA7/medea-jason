@@ -69,27 +69,45 @@ impl<T> Drop for Object<T> {
     fn drop(&mut self) {
         let ptr = self.ptr.clone();
         let window = self.window.clone();
-        let (tx, rx) = mpsc::channel();
-        drop(tokio::spawn(async move {
-            window
-                .execute(Statement::new(
-                    // language=JavaScript
-                    "
+        task::block_in_place(move || {
+            futures::executor::block_on(async move {
+                window
+                    .execute(Statement::new(
+                        // language=JavaScript
+                        "
                     async () => {
                         const [id] = args;
                         window.registry.delete(id);
                     }
                     ",
-                    [ptr.to_string().into()],
-                ))
-                .await
-                .map(drop)
-                .unwrap();
-            tx.send(()).unwrap();
-        }));
-        task::block_in_place(move || {
-            rx.recv().unwrap();
+                        [ptr.to_string().into()],
+                    ))
+                    .await
+                    .map(drop)
+                    .unwrap();
+            });
         });
+        // let (tx, rx) = mpsc::channel();
+        // drop(tokio::spawn(async move {
+        //     window
+        //         .execute(Statement::new(
+        //             // language=JavaScript
+        //             "
+        //             async () => {
+        //                 const [id] = args;
+        //                 window.registry.delete(id);
+        //             }
+        //             ",
+        //             [ptr.to_string().into()],
+        //         ))
+        //         .await
+        //         .map(drop)
+        //         .unwrap();
+        //     tx.send(()).unwrap();
+        // }));
+        // task::block_in_place(move || {
+        //     rx.recv().unwrap();
+        // });
     }
 }
 

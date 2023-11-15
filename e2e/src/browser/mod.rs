@@ -71,12 +71,11 @@ pub struct Window {
     /// Count of this [`Window`] references.
     ///
     /// Used in a [`Drop`] implementation of this [`Window`].
-    rc: Arc<AtomicUsize>,
+    rc: Arc<()>,
 }
 
 impl Clone for Window {
     fn clone(&self) -> Self {
-        _ = self.rc.fetch_add(1, Ordering::SeqCst);
         Self {
             client: self.client.clone(),
             window: self.window.clone(),
@@ -87,8 +86,8 @@ impl Clone for Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        if self.rc.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.client.blocking_window_close(self.window.clone());
+        if Arc::get_mut(&mut self.rc).is_some() {
+            self.client.close_window(self.window.clone());
         }
     }
 }
@@ -101,10 +100,26 @@ impl Window {
         let this = Self {
             client,
             window,
-            rc: Arc::new(AtomicUsize::new(1)),
+            rc: Arc::new(()),
         };
         mock::instantiate_mocks(&this).await;
         this
+    }
+
+    async fn switch_to(&self) -> Result<()> {
+        self.client.switch_to_window(self.window.clone()).await
+    }
+
+    pub fn blocking_switch_to(&self) -> Result<()> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let this = self.clone();
+        drop(tokio::spawn(async move {
+            let res = this.switch_to().await;
+            tx.send(res).unwrap();
+        }));
+        tokio::task::block_in_place(move || {
+            rx.recv().unwrap()
+        })
     }
 
     /// Executes the provided [`Statement`] in this [`Window`].
@@ -145,6 +160,6 @@ impl WindowFactory {
 
 impl Drop for WindowFactory {
     fn drop(&mut self) {
-        self.0.blocking_close();
+        self.0.close();
     }
 }
